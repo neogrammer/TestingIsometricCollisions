@@ -1,6 +1,7 @@
 #include <SFML/Graphics.hpp>
 #include <vector>
-
+#include <array>
+#include <memory>
 sf::Vector2f toIso(sf::Vector2f cart)
 {
     // cart is a position on the screen, lets strip it to cell space
@@ -24,64 +25,174 @@ sf::Vector2f toCart(sf::Vector2f iso)
 }
 
 
-struct vec2d
+struct Collider
 {
-    float x;
-    float y;
+    virtual ~Collider() {}
+
+    virtual sf::Sprite& getSprite() = 0;
+    virtual sf::Vector2f getPos() = 0;
+    virtual sf::Vector2f getPoint(int idx_) = 0;
+    virtual std::array<sf::Vector2f, 4> getPoints() = 0;
 };
 
-struct polygon
+struct IsoTileCollider : public Collider
 {
-    std::vector<vec2d> p;	// Transformed Points
-    vec2d pos;				// Position of shape
-    std::vector<vec2d> o;	// "Model" of shape							
-    bool overlap = false;	// Flag to indicate if overlap has occurred
+    sf::Sprite& spr;
+    sf::Vector2f center{ 64.f, 32.f };
+    std::vector<sf::Vector2f> vertex = {
+        {64.f, 0.f},
+        {0.f,-32.f},
+        {-64.f,0.f}, 
+        {0.f, 32.f}
+    };	// "Model"
+
+    IsoTileCollider() = delete;
+
+    explicit IsoTileCollider(sf::Sprite& spr_)
+        : spr{ spr_ } {
+        
+    }
+
+    ~IsoTileCollider() {}
+
+    IsoTileCollider(const IsoTileCollider&) = delete;
+    IsoTileCollider& operator=(const IsoTileCollider&) = delete;
+    IsoTileCollider(IsoTileCollider&&) = delete;
+    IsoTileCollider& operator=(IsoTileCollider&&) = delete;
+
+    sf::Sprite& getSprite() override
+    {
+
+        return spr;
+    }
+
+    sf::Vector2f getPos() override
+    {
+        return spr.getPosition() + center;
+    }
+
+    sf::Vector2f getPoint(int idx_) override
+    {
+        if (idx_ >= 4 || idx_ < 0)
+            return this->getPos();
+        else
+            return this->getPos() + vertex[idx_];
+    }
+
+    std::array<sf::Vector2f, 4> getPoints() override
+    {
+        std::array<sf::Vector2f, 4> arr = { sf::Vector2f{0.f,0.f},  sf::Vector2f{0.f,0.f},  sf::Vector2f{0.f,0.f},  sf::Vector2f{0.f,0.f} };
+
+        for (int i = 0; i < 4; i++)
+        {
+            arr[i] = getPoint(i);
+        }
+        return arr;
+    }
+
 };
 
-std::vector<polygon> vecShapes;
-
-void CreateModel()
+struct BoxCollider : public Collider
 {
-    // Create Diamond
-    polygon s3;
-    s3.pos = { 0, 0 };
-    s3.o.push_back({ 64, 0 });
-    s3.o.push_back({ 0, -32 });
-    s3.o.push_back({ -64, 0 });
-    s3.o.push_back({ 0, 32 });
-    s3.p.resize(4);
+    sf::Sprite& spr;
+    sf::Vector2f center{ 30.f, 30.f };
+    std::vector<sf::Vector2f> vertex = {
+        { -30, -30 },
+        { -30, +30 },
+        { +30, +30 },
+        { +30, -30 }
+    };	// "Model"
+    BoxCollider() = delete;
+    explicit BoxCollider(sf::Sprite& spr_, float w_ = 60.f, float h_ = 60.f)
+        : spr{ spr_ } {
+        float hw = w_ / 2.f;
+        float hh = h_ / 2.f;
+        center.x = hw;
+        center.y = hh;
 
-    vecShapes.push_back(s3);
-}
+        vertex[0].x = -hw;
+        vertex[0].y = -hh;
+        vertex[1].x = -hw;
+        vertex[1].y = +hh;
+        vertex[2].x = +hw;
+        vertex[2].y = +hh;
+        vertex[3].x = +hw;
+        vertex[3].y = -hh;
+    }
 
+    ~BoxCollider() {}
+
+   BoxCollider(const BoxCollider&) = delete;
+   BoxCollider& operator=(const BoxCollider&) = delete;
+   BoxCollider(BoxCollider&&) = delete;
+   BoxCollider& operator=(BoxCollider&&) = delete;
+
+   sf::Sprite& getSprite() override
+   {
+
+       return spr;
+   }
+
+   sf::Vector2f getPos() override
+   {
+       return spr.getPosition() + center;
+   }
+
+   sf::Vector2f getPoint(int idx_) override
+   {
+       if (idx_ >= 4 || idx_ < 0)
+           return this->getPos();
+       else
+           return this->getPos() + vertex[idx_];
+   }
+
+   std::array<sf::Vector2f, 4> getPoints() override
+   {
+       std::array<sf::Vector2f, 4> arr = { sf::Vector2f{0.f,0.f},  sf::Vector2f{0.f,0.f},  sf::Vector2f{0.f,0.f},  sf::Vector2f{0.f,0.f} };
+
+       for (int i = 0; i < 4; i++)
+       {
+           arr[i] = getPoint(i);
+       }
+       return arr;
+   }
+
+};
+
+std::vector<std::unique_ptr<Collider>> collisionShapes;
 
 // Use edge/diagonal intersections.
-bool ShapeOverlap_DIAGS_STATIC(polygon& r1, polygon& r2)
+bool ShapeOverlap_DIAGS_STATIC(std::unique_ptr<Collider>& r1, std::unique_ptr<Collider>& r2)
 {
-    polygon* poly1 = &r1;
-    polygon* poly2 = &r2;
-
+    Collider* collider1 = r1.get();
+    Collider* collider2 = r2.get();
+    bool collided = false;
     for (int shape = 0; shape < 2; shape++)
     {
         if (shape == 1)
         {
-            poly1 = &r2;
-            poly2 = &r1;
+            collider1 = r2.get();
+            collider2 = r1.get();
         }
 
         // Check diagonals of this polygon...
-        for (int p = 0; p < poly1->p.size(); p++)
+        for (int p = 0; p < 4; p++)
         {
-            vec2d line_r1s = poly1->pos;
-            vec2d line_r1e = poly1->p[p];
+            sf::Vector2f line_r1s = collider1->getPos();
 
-            vec2d displacement = { 0,0 };
+            auto points = collider1->getPoints();
+
+            sf::Vector2f line_r1e = points[p];
+
+            sf::Vector2f displacement = { 0,0 };
 
             // ...against edges of this polygon
-            for (int q = 0; q < poly2->p.size(); q++)
+            for (int q = 0; q < 4; q++)
             {
-                vec2d line_r2s = poly2->p[q];
-                vec2d line_r2e = poly2->p[(q + 1) % poly2->p.size()];
+                auto points2 = collider2->getPoints();
+
+                sf::Vector2f line_r2s = points2[q];
+                sf::Vector2f line_r2e = points2[(q + 1) % points2.size()];
 
                 // Standard "off the shelf" line segment intersection
                 float h = (line_r2e.x - line_r2s.x) * (line_r1s.y - line_r1e.y) - (line_r1s.x - line_r1e.x) * (line_r2e.y - line_r2s.y);
@@ -90,21 +201,19 @@ bool ShapeOverlap_DIAGS_STATIC(polygon& r1, polygon& r2)
 
                 if (t1 >= 0.0f && t1 < 1.0f && t2 >= 0.0f && t2 < 1.0f)
                 {
+                    collided = true;
                     displacement.x += (1.0f - t1) * (line_r1e.x - line_r1s.x);
                     displacement.y += (1.0f - t1) * (line_r1e.y - line_r1s.y);
                 }
             }
 
-            r1.pos.x += displacement.x * (shape == 0 ? -1 : +1);
-            r1.pos.y += displacement.y * (shape == 0 ? -1 : +1);
+            r1->getSprite().move({ displacement.x * (shape == 0 ? -1 : +1), displacement.y * (shape == 0 ? -1 : +1) });
         }
     }
 
     // Cant overlap if static collision is resolved
-    return false;
+    return collided;
 }
-
-
 
 int main()
 {
@@ -113,46 +222,19 @@ int main()
     sf::View vw = window.getDefaultView();
     vw.setCenter({ 400.f,200.f });
     window.setView(vw);
-    
-    sf::RectangleShape playerShp{ { 299.f, 240.f } };
-    playerShp.setPosition({ 600.f, -100.f });
-    sf::Vector2f colBoxOffset{ 109.f,200.f };
-    playerShp.setOutlineColor(sf::Color::White);
-    playerShp.setOutlineThickness(2);
-    playerShp.setFillColor(sf::Color::Transparent);
 
-
-   
-    polygon r1;
-
-    r1.pos.x = 400.f;
-    r1.pos.y = 0.f;
-    r1.o.push_back({ -30, -30 });
-    r1.o.push_back({ -30, +30 });
-    r1.o.push_back({ +30, +30 });
-    r1.o.push_back({ +30, -30 });
-    r1.p.resize(4);
-
-    vecShapes.push_back(r1);
-   
-
-    
-
-    sf::RectangleShape collideShp({ 60.f, 60.f });
-    collideShp.setFillColor(sf::Color::Yellow);
-    collideShp.setOrigin({ 30.f,30.f });
-
-   
-    
-    
     sf::Texture tex("isoblock.png");
-    
-    
+    sf::Texture ptex("pbox.png");
 
+    sf::Sprite playerShp(ptex);
+    playerShp.setPosition({ 600.f, -100.f });
+  
+    collisionShapes.push_back(std::make_unique<BoxCollider>(playerShp, 50.f,30.f));
 
     std::vector<sf::Sprite> sprVec = {};
 
     int numTiles = 12 * 7;
+    sprVec.reserve(numTiles);
     for (int i = 0; i < numTiles; i++)
     {
         int cx = i % 12;
@@ -161,17 +243,12 @@ int main()
         float cposX = (float)cx * 128.f;
         float cposY = (float)cy * 64.f;
 
-        sprVec.push_back(sf::Sprite(tex));
+       
+        sprVec.emplace_back(sf::Sprite{ tex });
         sprVec[i].setPosition(toIso({cposX,cposY}));
-        CreateModel();
-        vecShapes[i+1].pos = { sprVec[i].getPosition().x + 64.f, sprVec[i].getPosition().y + 32.f };
-    }
+        collisionShapes.emplace_back(std::make_unique<IsoTileCollider>(sprVec[i]));
    
-
-    //spr.setPosition({ 0.f, 0.f });
-    
-
-
+    }
     sf::Clock timer{};
     float elapsed{ 0.f };
     const float FPS60 = { 1.f / 60.f };
@@ -194,60 +271,30 @@ int main()
         elapsed = timer.restart().asSeconds();
 
         bool overlapHappened = false;
-
-        
-
-          
             if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::W))
             {
-               vecShapes[0].pos = {vecShapes[0].pos.x,vecShapes[0].pos.y -300.f * elapsed};
+                playerShp.setPosition({ playerShp.getPosition().x,playerShp.getPosition().y - 300.f * elapsed});
             }
             if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A))
             {
-                vecShapes[0].pos = { vecShapes[0].pos.x - 300.f * elapsed ,vecShapes[0].pos.y};
+                playerShp.setPosition({playerShp.getPosition().x - 300.f * elapsed , playerShp.getPosition().y });
             }
             if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::S))
             {
-                vecShapes[0].pos = { vecShapes[0].pos.x,vecShapes[0].pos.y + 300.f * elapsed };
+                playerShp.setPosition({playerShp.getPosition().x, playerShp.getPosition().y + 300.f * elapsed });
             }
             if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D))
             {
-                vecShapes[0].pos = { vecShapes[0].pos.x + 300.f * elapsed,vecShapes[0].pos.y };
+                playerShp.setPosition({ playerShp.getPosition().x + 300.f * elapsed,playerShp.getPosition().y});
             }
-           // playerShp.setPosition(collideShp.getPosition() - colBoxOffset);
-
-
-            // Update Shapes and reset flags
-            for (auto& r : vecShapes)
-            {
-                for (int i = 0; i < r.o.size(); i++)
-                    r.p[i] =
-                {	// 2D Rotation Transform + 2D Translation
-                    r.o[i].x + r.pos.x,
-                    r.o[i].y + r.pos.y,
-                };
-
-                r.overlap = false;
-            }
-
-
-
-           
+         
             // Check for overlap
        // Check for overlap
-            for (int m = 0; m < vecShapes.size(); m++)
-                for (int n = m + 1; n < vecShapes.size(); n++)
+           // for (int m = 0; m < collisionShapes.size(); m++)
+                for (int n = 1; n < collisionShapes.size(); n++)
                 {
-                     overlapHappened |= ShapeOverlap_DIAGS_STATIC(vecShapes[m], vecShapes[n]); break;
+                     overlapHappened |= ShapeOverlap_DIAGS_STATIC(collisionShapes[0], collisionShapes[n]);
                 }
-
-
-
-
-            
-        
-
-
         // Remainder of main loop
         window.clear();
         for (int i = 0; i < sprVec.size(); i++)
@@ -255,22 +302,9 @@ int main()
             window.draw(sprVec[i]);
 
         }
-       /* for (int i = 0; i < sprVec.size(); i++)
-        {
-            sf::RectangleShape s{ {128.f,64.f} };
-            s.setOutlineColor(sf::Color::Red);
-            s.setOutlineThickness(1);
-            s.setFillColor(sf::Color::Transparent);
-            s.setPosition({ vecShapes[i].pos.x - 64.f,vecShapes[i].pos.y - 32.f });
-            window.draw(s);
-
-        }*/
-        collideShp.setPosition({ vecShapes[0].pos.x, vecShapes[0].pos.y });
-        playerShp.setPosition(collideShp.getPosition() - colBoxOffset);
-
+     
         window.draw(playerShp);
-        window.draw(collideShp);
-
+    
         window.display();
     }
 	return 0;

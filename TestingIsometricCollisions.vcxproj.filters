@@ -18,6 +18,9 @@
     <Image Include="isoblock.png">
       <Filter>Resource Files</Filter>
     </Image>
+    <Image Include="goblinAtlas300x300.png">
+      <Filter>Resource Files</Filter>
+    </Image>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
